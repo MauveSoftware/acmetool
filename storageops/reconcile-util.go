@@ -3,6 +3,7 @@ package storageops
 import (
 	"crypto/x509"
 	"fmt"
+
 	"github.com/hlandau/acmetool/storage"
 )
 
@@ -98,8 +99,29 @@ func DoesCertificateSatisfy(c *storage.Certificate, t *storage.Target) bool {
 	return true
 }
 
+// FindPreferredSatisfying retrieves the currently linked certificate if it satisfies the target and does not need renewal
+func FindPreferredSatisfying(s storage.Store, t *storage.Target) *storage.Certificate {
+	if len(t.Satisfy.Names) == 0 {
+		return nil
+	}
+
+	name := t.Satisfy.Names[0]
+	c, _ := s.PreferredCertificateForHostname(name)
+	if c != nil && DoesCertificateSatisfy(c, t) && !CertificateNeedsRenewing(c, t) {
+		return c
+	}
+
+	return nil
+}
+
 func FindBestCertificateSatisfying(s storage.Store, t *storage.Target) (*storage.Certificate, error) {
 	var bestCert *storage.Certificate
+
+	pref := FindPreferredSatisfying(s, t)
+	if pref != nil {
+		log.Debugf("found already linked certificate satisfying target which is valid and does not need renewal: %v", pref)
+		return pref, nil
+	}
 
 	err := s.VisitCertificates(func(c *storage.Certificate) error {
 		if DoesCertificateSatisfy(c, t) {
