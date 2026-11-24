@@ -3,15 +3,12 @@ package storage
 import (
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base32"
 	"fmt"
 	"gopkg.in/hlandau/acmeapi.v2/acmeutils"
-	"io"
-	"math/big"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -124,9 +121,12 @@ func ensureSeparator(p string) string {
 }
 
 func determineKeyIDFromCert(c *x509.Certificate) string {
-	h := sha256.New()
-	h.Write(c.RawSubjectPublicKeyInfo)
-	return strings.ToLower(strings.TrimRight(base32.StdEncoding.EncodeToString(h.Sum(nil)), "="))
+	return keyIDFromSubjectPublicKeyInfo(c.RawSubjectPublicKeyInfo)
+}
+
+func keyIDFromSubjectPublicKeyInfo(spki []byte) string {
+	h := sha256.Sum256(spki)
+	return strings.ToLower(strings.TrimRight(base32.StdEncoding.EncodeToString(h[:]), "="))
 }
 
 func getPublicKey(pk crypto.PrivateKey) crypto.PublicKey {
@@ -141,63 +141,19 @@ func getPublicKey(pk crypto.PrivateKey) crypto.PublicKey {
 }
 
 func determineKeyIDFromKey(pk crypto.PrivateKey) (string, error) {
-	return determineKeyIDFromKeyIntl(getPublicKey(pk), pk)
+	return DetermineKeyIDFromPublicKey(getPublicKey(pk))
 }
 
-func determineKeyIDFromKeyIntl(pubk crypto.PublicKey, pk crypto.PrivateKey) (string, error) {
-	cc := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-	}
-	cb, err := x509.CreateCertificate(rand.Reader, cc, cc, pubk, pk)
-	if err != nil {
-		return "", err
-	}
-
-	c, err := x509.ParseCertificate(cb)
-	if err != nil {
-		return "", err
-	}
-
-	return determineKeyIDFromCert(c), nil
-}
-
-type psuedoPrivateKey struct {
-	pk crypto.PublicKey
-}
-
-func (ppk *psuedoPrivateKey) Public() crypto.PublicKey {
-	return ppk.pk
-}
-
-func (ppk *psuedoPrivateKey) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
-	return []byte{0}, nil
-}
-
-// Given a public key, returns the key ID.
+// DetermineKeyIDFromPublicKey returns the key ID for a public key. It equals
+// the key ID derived from any certificate for that key, since both hash the
+// DER-encoded SubjectPublicKeyInfo.
 func DetermineKeyIDFromPublicKey(pubk crypto.PublicKey) (string, error) {
-	// Trick crypto/x509 into creating a certificate so we can grab the
-	// subjectPublicKeyInfo by giving it a fake private key generating an invalid
-	// signature. ParseCertificate doesn't verify the signature so this will
-	// work.
-	//
-	// Yes, this is very hacky, but avoids having to duplicate code in crypto/x509.
-
-	determineKeyIDFromKeyIntl(pubk, psuedoPrivateKey{})
-
-	cc := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-	}
-	cb, err := x509.CreateCertificate(rand.Reader, cc, cc, pubk, &psuedoPrivateKey{pubk})
+	spki, err := x509.MarshalPKIXPublicKey(pubk)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("marshaling public key: %w", err)
 	}
 
-	c, err := x509.ParseCertificate(cb)
-	if err != nil {
-		return "", err
-	}
-
-	return determineKeyIDFromCert(c), nil
+	return keyIDFromSubjectPublicKeyInfo(spki), nil
 }
 
 func determineAccountID(providerURL string, privateKey interface{}) (string, error) {

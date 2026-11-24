@@ -798,7 +798,7 @@ func (s *fdbStore) ImportCertificate(acct *Account, url string) (*Certificate, e
 	}
 
 	coll := s.db.Collection("certs/" + certID)
-	err := coll.WriteLink("account", fdb.Link{"accounts/" + acct.ID()})
+	err := coll.WriteLink("account", fdb.Link{Target: "accounts/" + acct.ID()})
 	if err != nil {
 		return nil, err
 	}
